@@ -283,6 +283,17 @@ body {
   width: 100%;
   height: 200px;
   object-fit: cover;
+  user-select: auto;
+  -webkit-user-select: auto;
+  -moz-user-select: auto;
+  -ms-user-select: auto;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.image-card img.selected {
+  border: 3px solid var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 }
 
 .image-card-actions {
@@ -668,5 +679,102 @@ input[type="color"] {
 @media (max-width: 480px) {
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Before/After Comparison Styles */
+.comparison-section {
+  background: var(--light);
+  padding: 24px;
+  border-radius: 12px;
+  margin: 30px 0;
+  border: 2px solid var(--border);
+}
+
+.comparison-container {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.comparison-image-wrapper {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  background: white;
+}
+
+.comparison-label {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  z-index: 10;
+}
+
+.comparison-label.enhanced {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+.comparison-image {
+  width: 100%;
+  height: 400px;
+  object-fit: cover;
+  display: block;
+}
+
+.comparison-arrow {
+  font-size: 32px;
+  color: var(--primary);
+  font-weight: bold;
+}
+
+/* Enhanced Badge */
+.enhanced-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: white;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  z-index: 10;
+}
+
+/* Disabled button style */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Responsive Comparison */
+@media (max-width: 768px) {
+  .comparison-container {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .comparison-arrow {
+    transform: rotate(90deg);
+    font-size: 24px;
+  }
+
+  .comparison-image {
+    height: 300px;
   }
 }
