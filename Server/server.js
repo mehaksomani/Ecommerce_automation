@@ -8,7 +8,7 @@ import { dirname, join } from 'path';
 // Import routes
 import imageRoutes from './routes/imageRoutes.js';
 import contentRoutes from './routes/contentRoutes.js';
-import bannerRoutes from './routes/bannerRoutes.js';
+//import bannerRoutes from './routes/bannerRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 
 dotenv.config();
@@ -48,7 +48,7 @@ connectDB();
 // Routes
 app.use('/api/images', imageRoutes);
 app.use('/api/content', contentRoutes);
-app.use('/api/banners', bannerRoutes);
+//app.use('/api/banners', bannerRoutes);
 app.use('/api/projects', projectRoutes);
 
 // Health check

@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
-//import axios from 'axios';
+import axios from 'axios';
 import './App.css';
+
+// Import services
+import contentService from './services/contentService';
+import imageService from './services/imageService';
+import bannerService from './services/bannerService';
+import projectService from './services/projectService';
 
 // API base URL
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -11,6 +17,7 @@ function App() {
   const [uploadedImages, setUploadedImages] = useState([]);
   const [currentImage, setCurrentImage] = useState(null);
   const [selectedTone, setSelectedTone] = useState('professional');
+  const [currentProjectId, setCurrentProjectId] = useState(null); // ✅ NEW: Track current project
   const [stats, setStats] = useState({
     images: 0,
     content: 0,
@@ -67,7 +74,30 @@ function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Image upload handler
+  // ✅ Load project on mount (if exists)
+  useEffect(() => {
+    const loadSavedProject = async () => {
+      const savedProjectId = localStorage.getItem('currentProjectId');
+      if (savedProjectId) {
+        try {
+          const response = await projectService.getProject(savedProjectId);
+          setCurrentProjectId(savedProjectId);
+          setStats({
+            images: response.project.stats.imagesEnhanced || 0,
+            content: response.project.stats.contentGenerated || 0,
+            banners: response.project.stats.bannersCreated || 0,
+            projects: 1
+          });
+        } catch (error) {
+          console.log('No existing project found, will create new one');
+          localStorage.removeItem('currentProjectId');
+        }
+      }
+    };
+    loadSavedProject();
+  }, []);
+
+  // ✅ Image upload handler with database integration
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
     const formData = new FormData();
@@ -76,21 +106,31 @@ function App() {
       formData.append('images', file);
     });
 
-    try {
-      const response = await axios.post(`${API_URL}/images/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+    // Add projectId if exists
+    if (currentProjectId) {
+      formData.append('projectId', currentProjectId);
+    }
 
-      setUploadedImages([...uploadedImages, ...response.data.files]);
-      setStats(prev => ({ ...prev, images: prev.images + response.data.files.length }));
-      showToast('Images uploaded successfully!', 'success');
+    try {
+      const response = await imageService.uploadImages(formData);
+
+      setUploadedImages([...uploadedImages, ...response.files]);
+      
+      // ✅ Save projectId from response
+      if (response.projectId) {
+        setCurrentProjectId(response.projectId);
+        localStorage.setItem('currentProjectId', response.projectId);
+      }
+
+      setStats(prev => ({ ...prev, images: prev.images + response.files.length }));
+      showToast(`${response.files.length} image(s) uploaded successfully!`, 'success');
     } catch (error) {
       showToast('Failed to upload images', 'error');
       console.error('Upload error:', error);
     }
   };
 
-  // Apply image enhancements
+  // ✅ Apply image enhancements with database save
   const applyEnhancements = async () => {
     if (!currentImage) {
       showToast('Please select an image first', 'warning');
@@ -98,29 +138,33 @@ function App() {
     }
 
     try {
-      const response = await axios.post(`${API_URL}/images/enhance`, {
+      const response = await imageService.enhanceImage({
         filename: currentImage.filename,
         enhancements: {
           brightness: enhancements.brightness / 100,
           contrast: enhancements.contrast / 100,
           saturation: enhancements.saturation / 100,
-          sharpness: enhancements.sharpness / 10
-        }
+          sharpness: enhancements.sharpness
+        },
+        projectId: currentProjectId
       });
 
-      showToast('Image enhanced successfully!', 'success');
-      // Update the current image with enhanced path
+      showToast('Image enhanced and saved to database!', 'success');
+      
+      // Update current image with enhanced version
       setCurrentImage({
         ...currentImage,
-        enhancedPath: response.data.enhancedPath
+        enhancedPath: response.enhancedPath
       });
+
+      setStats(prev => ({ ...prev, images: prev.images + 1 }));
     } catch (error) {
       showToast('Failed to enhance image', 'error');
       console.error('Enhancement error:', error);
     }
   };
 
-  // Generate content
+  // ✅ Generate content with database integration
   const generateContent = async () => {
     if (!contentForm.productName && contentForm.contentType !== 'sizetable') {
       showToast('Please enter a product name', 'warning');
@@ -131,14 +175,28 @@ function App() {
     setGeneratedContent('<div class="spinner"></div>');
 
     try {
-      const response = await axios.post(`${API_URL}/content/generate`, {
+      const response = await contentService.generate({
         ...contentForm,
-        tone: selectedTone
+        tone: selectedTone,
+        projectId: currentProjectId
       });
 
-      setGeneratedContent(response.data.content);
+      setGeneratedContent(response.content);
+      
+      // ✅ Save projectId from response
+      if (response.projectId) {
+        setCurrentProjectId(response.projectId);
+        localStorage.setItem('currentProjectId', response.projectId);
+      }
+
       setStats(prev => ({ ...prev, content: prev.content + 1 }));
-      showToast('Content generated successfully!', 'success');
+      
+      const sourceText = response.source === 'huggingface' ? 'AI (Hugging Face)' : 'Template';
+      showToast(`Content generated using ${sourceText} and saved to database!`, 'success');
+      
+      console.log('✅ Content saved with Project ID:', response.projectId);
+      console.log('📊 Stats:', response.stats);
+      
     } catch (error) {
       showToast('Failed to generate content', 'error');
       console.error('Content generation error:', error);
@@ -148,10 +206,10 @@ function App() {
     }
   };
 
-  // Generate banner
+  // ✅ Generate banner with database integration
   const generateBanner = async () => {
     try {
-      const response = await axios.post(`${API_URL}/banners/generate`, {
+      const response = await bannerService.generateBanner({
         templateType: bannerForm.templateType,
         mainText: bannerForm.mainText,
         subtext: bannerForm.subtext,
@@ -160,16 +218,102 @@ function App() {
           background: bannerForm.bgColor,
           text: bannerForm.textColor,
           accent: bannerForm.accentColor
-        }
+        },
+        projectId: currentProjectId
       });
 
-      setBannerPreview(response.data.path);
+      setBannerPreview(response.path);
+      
+      // ✅ Save projectId from response
+      if (response.projectId) {
+        setCurrentProjectId(response.projectId);
+        localStorage.setItem('currentProjectId', response.projectId);
+      }
+
       setStats(prev => ({ ...prev, banners: prev.banners + 1 }));
-      showToast('Banner generated successfully!', 'success');
+      showToast('Banner generated and saved to database!', 'success');
     } catch (error) {
       showToast('Failed to generate banner', 'error');
       console.error('Banner generation error:', error);
     }
+  };
+
+  // ✅ Copy content to clipboard
+  const copyContent = () => {
+    const contentElement = document.getElementById('generated-content-display');
+    if (contentElement) {
+      const textContent = contentElement.innerText || contentElement.textContent;
+      navigator.clipboard.writeText(textContent)
+        .then(() => showToast('Content copied to clipboard!', 'success'))
+        .catch(() => showToast('Failed to copy content', 'error'));
+    }
+  };
+
+  // ✅ Regenerate content
+  const regenerateContent = () => {
+    generateContent();
+  };
+
+  // ✅ Download content as HTML
+  const downloadContent = () => {
+    const content = generatedContent;
+    const blob = new Blob([content], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `content-${Date.now()}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Content downloaded!', 'success');
+  };
+
+  // ✅ View project history
+  const viewProjectHistory = async () => {
+    if (!currentProjectId) {
+      showToast('No project to view yet. Generate some content first!', 'warning');
+      return;
+    }
+
+    try {
+      const response = await projectService.getProject(currentProjectId);
+      console.log('📁 Project Data:', response.project);
+      
+      const project = response.project;
+      const summary = `
+Project: ${project.name}
+Type: ${project.type}
+Created: ${new Date(project.createdAt).toLocaleString()}
+
+Statistics:
+- Images Enhanced: ${project.stats.imagesEnhanced}
+- Content Generated: ${project.stats.contentGenerated}
+- Banners Created: ${project.stats.bannersCreated}
+
+Total Items:
+- Images: ${project.images.length}
+- Content: ${project.content.length}
+- Banners: ${project.banners.length}
+      `;
+      
+      alert(summary);
+      showToast('Check console for full project details', 'success');
+    } catch (error) {
+      showToast('Failed to load project history', 'error');
+      console.error('Project load error:', error);
+    }
+  };
+
+  // ✅ Save project (manual save)
+  const saveProject = async () => {
+    if (!currentProjectId) {
+      showToast('No project to save yet. Your work is auto-saved!', 'success');
+      return;
+    }
+
+    showToast('Project is automatically saved to database!', 'success');
+    console.log('Current Project ID:', currentProjectId);
   };
 
   // Reset enhancements
@@ -181,6 +325,16 @@ function App() {
       sharpness: 0
     });
     showToast('Reset to defaults', 'success');
+  };
+
+  // ✅ Start new project
+  const startNewProject = () => {
+    if (confirm('Start a new project? Current project ID will be cleared.')) {
+      setCurrentProjectId(null);
+      localStorage.removeItem('currentProjectId');
+      setStats({ images: 0, content: 0, banners: 0, projects: 0 });
+      showToast('New project started!', 'success');
+    }
   };
 
   return (
@@ -197,11 +351,14 @@ function App() {
               </div>
             </div>
             <div className="header-actions">
-              <button className="btn btn-secondary" onClick={() => showToast('Project saved!', 'success')}>
-                💾 Save Project
+              <button className="btn btn-secondary" onClick={viewProjectHistory}>
+                📊 View Project
               </button>
-              <button className="btn btn-primary" onClick={() => showToast('Exporting...', 'success')}>
-                📦 Export All
+              <button className="btn btn-secondary" onClick={startNewProject}>
+                🆕 New Project
+              </button>
+              <button className="btn btn-primary" onClick={saveProject}>
+                💾 Auto-Saved {currentProjectId ? '✓' : ''}
               </button>
             </div>
           </div>
@@ -212,12 +369,12 @@ function App() {
           <div className="stat-card">
             <h4>Images Enhanced</h4>
             <div className="stat-value">{stats.images}</div>
-            <div className="stat-change">+0 today</div>
+            <div className="stat-change">Project: {currentProjectId ? '✓' : '○'}</div>
           </div>
           <div className="stat-card">
             <h4>Content Generated</h4>
             <div className="stat-value">{stats.content}</div>
-            <div className="stat-change">+0 today</div>
+            <div className="stat-change">Database: {currentProjectId ? 'Saved' : 'Not saved'}</div>
           </div>
           <div className="stat-card">
             <h4>Banners Created</h4>
@@ -225,134 +382,153 @@ function App() {
             <div className="stat-change">+0 today</div>
           </div>
           <div className="stat-card">
-            <h4>Projects Saved</h4>
-            <div className="stat-value">{stats.projects}</div>
-            <div className="stat-change">Ready to export</div>
+            <h4>Active Projects</h4>
+            <div className="stat-value">{currentProjectId ? 1 : 0}</div>
+            <div className="stat-change">In progress</div>
           </div>
         </div>
 
-        {/* Main Content */}
-        <div className="main-content">
-          {/* Tabs */}
-          <div className="tabs">
-            <button 
-              className={`tab ${activeTab === 'enhance' ? 'active' : ''}`}
-              onClick={() => setActiveTab('enhance')}
-            >
-              🎨 Image Enhancement
-            </button>
-            <button 
-              className={`tab ${activeTab === 'writing' ? 'active' : ''}`}
-              onClick={() => setActiveTab('writing')}
-            >
-              ✍️ Content Writing
-            </button>
-            <button 
-              className={`tab ${activeTab === 'banners' ? 'active' : ''}`}
-              onClick={() => setActiveTab('banners')}
-            >
-              🎯 Marketing Banners
-            </button>
-            <button 
-              className={`tab ${activeTab === 'catalogue' ? 'active' : ''}`}
-              onClick={() => setActiveTab('catalogue')}
-            >
-              📚 Catalogue Design
-            </button>
-          </div>
+        {/* Tabs */}
+        <div className="tabs">
+          <button 
+            className={`tab ${activeTab === 'enhance' ? 'active' : ''}`}
+            onClick={() => setActiveTab('enhance')}
+          >
+            🎨 Image Enhancement
+          </button>
+          <button 
+            className={`tab ${activeTab === 'writing' ? 'active' : ''}`}
+            onClick={() => setActiveTab('writing')}
+          >
+            ✍️ Content Writing
+          </button>
+          <button 
+            className={`tab ${activeTab === 'banners' ? 'active' : ''}`}
+            onClick={() => setActiveTab('banners')}
+          >
+            🎯 Marketing Banners
+          </button>
+          <button 
+            className={`tab ${activeTab === 'catalogue' ? 'active' : ''}`}
+            onClick={() => setActiveTab('catalogue')}
+          >
+            📚 Catalogue Designer
+          </button>
+        </div>
 
+        {/* Tab Content */}
+        <div className="tab-contents">
           {/* Image Enhancement Tab */}
           {activeTab === 'enhance' && (
             <div className="tab-content active">
-              <div 
-                className="upload-area" 
-                onClick={() => document.getElementById('imageUpload').click()}
-              >
-                <div className="upload-icon">📸</div>
-                <h3>Upload Product Images</h3>
-                <p>Drag & drop images here or click to browse</p>
-                <p style={{ marginTop: '8px', fontSize: '12px' }}>Supports: JPG, PNG, WebP (Max 10MB)</p>
-              </div>
-              <input 
-                type="file" 
-                id="imageUpload" 
-                accept="image/*" 
-                multiple 
-                style={{ display: 'none' }}
-                onChange={handleImageUpload}
-              />
-
-              {uploadedImages.length > 0 && (
-                <>
-                  <div className="image-preview-grid">
-                    {uploadedImages.map((img, index) => (
-                      <div key={index} className="image-card">
-                        <img src={`http://localhost:5000${img.path}`} alt={img.originalName} />
-                        <div className="image-card-actions">
-                          <button 
-                            className="btn btn-primary btn-small"
-                            onClick={() => setCurrentImage(img)}
-                          >
-                            ✏️ Edit
-                          </button>
-                          <button 
-                            className="btn btn-secondary btn-small"
-                            onClick={() => setUploadedImages(uploadedImages.filter((_, i) => i !== index))}
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+              <div className="enhancement-grid">
+                <div className="upload-section">
+                  <h3>📤 Upload Images</h3>
+                  <div className="upload-zone">
+                    <input 
+                      type="file" 
+                      id="imageUpload" 
+                      multiple 
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      style={{ display: 'none' }}
+                    />
+                    <label htmlFor="imageUpload" className="upload-label">
+                      <div className="upload-icon">📁</div>
+                      <p>Click to upload or drag and drop</p>
+                      <small>PNG, JPG, GIF up to 10MB</small>
+                    </label>
                   </div>
 
-                  <div className="enhancement-controls">
-                    <h3 style={{ marginBottom: '20px' }}>🎛️ Enhancement Controls</h3>
-                    
-                    {['brightness', 'contrast', 'saturation'].map((control) => (
-                      <div key={control} className="control-group">
-                        <label>{control.charAt(0).toUpperCase() + control.slice(1)}</label>
-                        <div className="slider-container">
-                          <input 
-                            type="range" 
-                            min="0" 
-                            max="200" 
-                            value={enhancements[control]}
-                            onChange={(e) => setEnhancements({...enhancements, [control]: parseInt(e.target.value)})}
-                          />
-                          <span className="slider-value">{enhancements[control]}%</span>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div className="control-group">
-                      <label>Sharpness</label>
-                      <div className="slider-container">
-                        <input 
-                          type="range" 
-                          min="0" 
-                          max="100" 
-                          value={enhancements.sharpness}
-                          onChange={(e) => setEnhancements({...enhancements, sharpness: parseInt(e.target.value)})}
-                        />
-                        <span className="slider-value">{enhancements.sharpness}%</span>
+                  {uploadedImages.length > 0 && (
+                    <div className="uploaded-images">
+                      <h4>Uploaded Images ({uploadedImages.length})</h4>
+                      <div className="image-grid">
+                        {uploadedImages.map((img, idx) => (
+                          <div 
+                            key={idx} 
+                            className="image-thumb"
+                            onClick={() => setCurrentImage(img)}
+                          >
+                            <img src={`${API_URL.replace('/api', '')}${img.path}`} alt={img.originalName} />
+                            <p>{img.originalName}</p>
+                          </div>
+                        ))}
                       </div>
                     </div>
+                  )}
+                </div>
 
-                    <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                {currentImage && (
+                  <div className="enhancement-controls">
+                    <h3>✨ Enhance Image</h3>
+                    
+                    <div className="control-group">
+                      <label>Brightness: {enhancements.brightness}%</label>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="200" 
+                        value={enhancements.brightness}
+                        onChange={(e) => setEnhancements({...enhancements, brightness: parseInt(e.target.value)})}
+                      />
+                    </div>
+
+                    <div className="control-group">
+                      <label>Contrast: {enhancements.contrast}%</label>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="200" 
+                        value={enhancements.contrast}
+                        onChange={(e) => setEnhancements({...enhancements, contrast: parseInt(e.target.value)})}
+                      />
+                    </div>
+
+                    <div className="control-group">
+                      <label>Saturation: {enhancements.saturation}%</label>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="200" 
+                        value={enhancements.saturation}
+                        onChange={(e) => setEnhancements({...enhancements, saturation: parseInt(e.target.value)})}
+                      />
+                    </div>
+
+                    <div className="control-group">
+                      <label>Sharpness: {enhancements.sharpness}</label>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="100" 
+                        value={enhancements.sharpness}
+                        onChange={(e) => setEnhancements({...enhancements, sharpness: parseInt(e.target.value)})}
+                      />
+                    </div>
+
+                    <div className="button-group">
                       <button className="btn btn-primary" onClick={applyEnhancements}>
                         ✨ Apply Enhancements
                       </button>
                       <button className="btn btn-secondary" onClick={resetEnhancements}>
                         🔄 Reset
                       </button>
-                      <button className="btn btn-secondary">
-                        ⬇️ Download
-                      </button>
+                    </div>
+
+                    <div className="preview-section">
+                      <h4>Preview</h4>
+                      <img 
+                        src={`${API_URL.replace('/api', '')}${currentImage.enhancedPath || currentImage.path}`} 
+                        alt="Preview" 
+                        style={{
+                          filter: `brightness(${enhancements.brightness}%) contrast(${enhancements.contrast}%) saturate(${enhancements.saturation}%)`
+                        }}
+                      />
                     </div>
                   </div>
-                </>
-              )}
+                )}
+              </div>
             </div>
           )}
 
@@ -395,6 +571,7 @@ function App() {
                       placeholder="e.g., 100% cotton, breathable, machine washable"
                       value={contentForm.features}
                       onChange={(e) => setContentForm({...contentForm, features: e.target.value})}
+                      rows="3"
                     />
                   </div>
 
@@ -449,48 +626,60 @@ function App() {
                         >
                           <option value="clothing">Clothing (S, M, L, XL)</option>
                           <option value="shoes">Shoes (US/EU/UK)</option>
-                          <option value="kids">Kids Clothing (Age-based)</option>
+                          <option value="kids">Kids Clothing</option>
                           <option value="rings">Rings</option>
                           <option value="international">International Sizing</option>
                         </select>
                       </div>
 
                       <div className="form-group">
-                        <label>Measurement Unit</label>
+                        <label>Unit Type</label>
                         <select 
                           value={contentForm.unitType}
                           onChange={(e) => setContentForm({...contentForm, unitType: e.target.value})}
                         >
                           <option value="inches">Inches</option>
                           <option value="cm">Centimeters</option>
-                          <option value="both">Both (Inches & CM)</option>
+                          <option value="both">Both (in/cm)</option>
                         </select>
                       </div>
                     </>
                   )}
 
-                  <button className="btn btn-primary" onClick={generateContent} style={{ width: '100%' }}>
-                    ✨ Generate Content
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={generateContent}
+                    disabled={isGenerating}
+                    style={{ width: '100%', marginTop: '16px' }}
+                  >
+                    {isGenerating ? '⏳ Generating...' : '✨ Generate Content'}
                   </button>
                 </div>
 
                 <div className="output-section">
                   <h3>📄 Generated Content</h3>
                   <div 
-                    className={`generated-content ${isGenerating ? 'loading' : ''}`}
-                    dangerouslySetInnerHTML={{ __html: generatedContent || '<p style="color: var(--text-light); text-align: center; padding: 60px 20px;">Fill in the product details and click "Generate Content" to see AI-powered copy</p>' }}
+                    id="generated-content-display"
+                    className="generated-content"
+                    dangerouslySetInnerHTML={{ __html: generatedContent || '<p>Fill in the product details and click "Generate Content" to get started.</p>' }}
                   />
-                  <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-                    <button className="btn btn-secondary" style={{ flex: 1 }}>
-                      📋 Copy
-                    </button>
-                    <button className="btn btn-secondary" onClick={generateContent} style={{ flex: 1 }}>
-                      🔄 Regenerate
-                    </button>
-                    <button className="btn btn-secondary" style={{ flex: 1 }}>
-                      💾 Save
-                    </button>
-                  </div>
+                  
+                  {generatedContent && (
+                    <div className="button-group" style={{ marginTop: '16px' }}>
+                      <button className="btn btn-secondary" onClick={copyContent}>
+                        📋 Copy
+                      </button>
+                      <button className="btn btn-secondary" onClick={regenerateContent}>
+                        🔄 Regenerate
+                      </button>
+                      <button className="btn btn-secondary" onClick={downloadContent}>
+                        💾 Download
+                      </button>
+                      <button className="btn btn-primary" onClick={viewProjectHistory}>
+                        👁️ View Saved
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -499,147 +688,161 @@ function App() {
           {/* Marketing Banners Tab */}
           {activeTab === 'banners' && (
             <div className="tab-content active">
-              <h3 style={{ marginBottom: '20px' }}>🎯 Choose a Banner Template</h3>
-              
-              <div className="template-grid">
-                {[
-                  { type: 'sale', emoji: '🏷️', name: 'Flash Sale Banner', desc: 'Perfect for time-limited offers' },
-                  { type: 'new', emoji: '⭐', name: 'New Arrival Banner', desc: 'Showcase latest products' },
-                  { type: 'collection', emoji: '👗', name: 'Collection Banner', desc: 'Highlight product collections' },
-                  { type: 'seasonal', emoji: '🎄', name: 'Seasonal Banner', desc: 'Holiday & seasonal promotions' }
-                ].map(template => (
-                  <div 
-                    key={template.type}
-                    className={`template-card ${bannerForm.templateType === template.type ? 'selected' : ''}`}
-                    onClick={() => setBannerForm({...bannerForm, templateType: template.type})}
-                  >
-                    <div className="template-preview" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
-                      {template.emoji}
-                    </div>
-                    <div className="template-info">
-                      <h4>{template.name}</h4>
-                      <p>{template.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {bannerForm.templateType && (
-                <div className="canvas-container">
-                  <h3 style={{ marginBottom: '20px' }}>🎨 Customize Your Banner</h3>
+              <div className="banner-grid">
+                <div className="input-section">
+                  <h3>🎨 Banner Design</h3>
                   
-                  {bannerPreview && (
-                    <div className="canvas-wrapper">
-                      <img src={`http://localhost:5000${bannerPreview}`} alt="Banner Preview" style={{ width: '100%' }} />
-                    </div>
-                  )}
+                  <div className="form-group">
+                    <label>Template Type</label>
+                    <select 
+                      value={bannerForm.templateType}
+                      onChange={(e) => setBannerForm({...bannerForm, templateType: e.target.value})}
+                    >
+                      <option value="sale">Flash Sale</option>
+                      <option value="new">New Arrival</option>
+                      <option value="collection">Collection</option>
+                      <option value="seasonal">Seasonal</option>
+                    </select>
+                  </div>
 
-                  <div className="design-controls">
-                    <div className="form-group">
-                      <label>Main Text</label>
-                      <input 
-                        type="text" 
-                        placeholder="Enter main text"
-                        value={bannerForm.mainText}
-                        onChange={(e) => setBannerForm({...bannerForm, mainText: e.target.value})}
-                      />
-                    </div>
+                  <div className="form-group">
+                    <label>Main Text</label>
+                    <input 
+                      type="text" 
+                      value={bannerForm.mainText}
+                      onChange={(e) => setBannerForm({...bannerForm, mainText: e.target.value})}
+                    />
+                  </div>
 
-                    <div className="form-group">
-                      <label>Subtitle</label>
-                      <input 
-                        type="text" 
-                        placeholder="Enter subtitle"
-                        value={bannerForm.subtext}
-                        onChange={(e) => setBannerForm({...bannerForm, subtext: e.target.value})}
-                      />
-                    </div>
+                  <div className="form-group">
+                    <label>Subtext</label>
+                    <input 
+                      type="text" 
+                      value={bannerForm.subtext}
+                      onChange={(e) => setBannerForm({...bannerForm, subtext: e.target.value})}
+                    />
+                  </div>
 
-                    <div className="form-group">
-                      <label>CTA Text</label>
-                      <input 
-                        type="text" 
-                        placeholder="Call to action"
-                        value={bannerForm.ctaText}
-                        onChange={(e) => setBannerForm({...bannerForm, ctaText: e.target.value})}
-                      />
-                    </div>
+                  <div className="form-group">
+                    <label>Call-to-Action Text</label>
+                    <input 
+                      type="text" 
+                      value={bannerForm.ctaText}
+                      onChange={(e) => setBannerForm({...bannerForm, ctaText: e.target.value})}
+                    />
+                  </div>
 
+                  <div className="color-group">
                     <div className="form-group">
                       <label>Background Color</label>
-                      <div className="color-picker-group">
-                        <input 
-                          type="color" 
-                          value={bannerForm.bgColor}
-                          onChange={(e) => setBannerForm({...bannerForm, bgColor: e.target.value})}
-                        />
-                        <span>Background</span>
-                      </div>
+                      <input 
+                        type="color" 
+                        value={bannerForm.bgColor}
+                        onChange={(e) => setBannerForm({...bannerForm, bgColor: e.target.value})}
+                      />
                     </div>
 
                     <div className="form-group">
                       <label>Text Color</label>
-                      <div className="color-picker-group">
-                        <input 
-                          type="color" 
-                          value={bannerForm.textColor}
-                          onChange={(e) => setBannerForm({...bannerForm, textColor: e.target.value})}
-                        />
-                        <span>Text</span>
-                      </div>
+                      <input 
+                        type="color" 
+                        value={bannerForm.textColor}
+                        onChange={(e) => setBannerForm({...bannerForm, textColor: e.target.value})}
+                      />
                     </div>
 
                     <div className="form-group">
                       <label>Accent Color</label>
-                      <div className="color-picker-group">
-                        <input 
-                          type="color" 
-                          value={bannerForm.accentColor}
-                          onChange={(e) => setBannerForm({...bannerForm, accentColor: e.target.value})}
-                        />
-                        <span>Accent</span>
-                      </div>
+                      <input 
+                        type="color" 
+                        value={bannerForm.accentColor}
+                        onChange={(e) => setBannerForm({...bannerForm, accentColor: e.target.value})}
+                      />
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-                    <button className="btn btn-primary" onClick={generateBanner}>
-                      🎨 Update Design
-                    </button>
-                    <button className="btn btn-secondary">
-                      ⬇️ Download Banner
-                    </button>
-                    <button className="btn btn-secondary">
-                      💾 Save Project
-                    </button>
-                  </div>
+                  <button className="btn btn-primary" onClick={generateBanner} style={{ width: '100%' }}>
+                    🎨 Generate Banner
+                  </button>
                 </div>
-              )}
+
+                <div className="output-section">
+                  <h3>🖼️ Banner Preview</h3>
+                  {bannerPreview ? (
+                    <div className="banner-preview">
+                      <img src={`${API_URL.replace('/api', '')}${bannerPreview}`} alt="Banner" />
+                      <button className="btn btn-primary" style={{ marginTop: '16px' }}>
+                        ⬇️ Download Banner
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <p>Configure your banner settings and click "Generate Banner"</p>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Catalogue Design Tab */}
+          {/* Catalogue Designer Tab */}
           {activeTab === 'catalogue' && (
             <div className="tab-content active">
-              <h3 style={{ marginBottom: '20px' }}>📚 Catalogue Design Templates</h3>
-              
-              <div className="template-grid">
-                {[
-                  { type: 'modern', emoji: '📱', name: 'Modern Minimalist', desc: 'Clean and professional layout' },
-                  { type: 'fashion', emoji: '👔', name: 'Fashion Lookbook', desc: 'Perfect for apparel brands' },
-                  { type: 'grid', emoji: '🎯', name: 'Product Grid', desc: 'Multi-product showcase' },
-                  { type: 'luxury', emoji: '💎', name: 'Luxury Collection', desc: 'Premium product display' }
-                ].map(template => (
-                  <div key={template.type} className="template-card">
-                    <div className="template-preview" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
-                      {template.emoji}
-                    </div>
-                    <div className="template-info">
-                      <h4>{template.name}</h4>
-                      <p>{template.desc}</p>
-                    </div>
+              <div className="catalogue-grid">
+                <div className="input-section">
+                  <h3>📚 Catalogue Information</h3>
+                  
+                  <div className="form-group">
+                    <label>Catalogue Title</label>
+                    <input 
+                      type="text" 
+                      value={catalogueForm.title}
+                      onChange={(e) => setCatalogueForm({...catalogueForm, title: e.target.value})}
+                    />
                   </div>
-                ))}
+
+                  <div className="form-group">
+                    <label>Brand Name</label>
+                    <input 
+                      type="text" 
+                      value={catalogueForm.brand}
+                      onChange={(e) => setCatalogueForm({...catalogueForm, brand: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Primary Color</label>
+                    <input 
+                      type="color" 
+                      value={catalogueForm.catalogueColor}
+                      onChange={(e) => setCatalogueForm({...catalogueForm, catalogueColor: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Style</label>
+                    <select 
+                      value={catalogueForm.style}
+                      onChange={(e) => setCatalogueForm({...catalogueForm, style: e.target.value})}
+                    >
+                      <option value="modern">Modern</option>
+                      <option value="classic">Classic</option>
+                      <option value="minimal">Minimal</option>
+                      <option value="luxury">Luxury</option>
+                    </select>
+                  </div>
+
+                  <button className="btn btn-primary" style={{ width: '100%' }}>
+                    📚 Generate Catalogue
+                  </button>
+                </div>
+
+                <div className="output-section">
+                  <h3>📄 Catalogue Preview</h3>
+                  <div className="empty-state">
+                    <p>Configure your catalogue settings and click "Generate Catalogue"</p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -648,17 +851,12 @@ function App() {
 
       {/* Toast Notification */}
       {toast && (
-        <div className={`toast ${toast.type}`}>
-          <span style={{ fontSize: '20px' }}>
-            {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : '⚠'}
-          </span>
-          <span>{toast.message}</span>
+        <div className={`toast toast-${toast.type}`}>
+          {toast.message}
         </div>
       )}
     </div>
   );
 }
-
-
 
 export default App;
