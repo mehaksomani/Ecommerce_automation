@@ -52,6 +52,7 @@ const upload = multer({
  * @access  Public
  */
 router.post('/upload', upload.array('images', 10), async (req, res) => {
+   console.log('image uploaded succesfully') ; 
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({

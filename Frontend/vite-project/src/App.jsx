@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-//import axios from 'axios';
+import axios from 'axios';
 import './App.css';
 
 // API base URL
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
 function App() {
   // State management
@@ -17,6 +17,8 @@ function App() {
     banners: 0,
     projects: 0
   });
+
+  console.log(uploadedImages) ; 
 
   // Enhancement controls
   const [enhancements, setEnhancements] = useState({
@@ -36,6 +38,7 @@ function App() {
     sizeTableType: 'clothing',
     unitType: 'inches'
   });
+
   const [generatedContent, setGeneratedContent] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -77,16 +80,19 @@ function App() {
     });
 
     try {
+    //  console.log(API_URL) ; 
       const response = await axios.post(`${API_URL}/images/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
+
+     // console.log('response', response) ; 
 
       setUploadedImages([...uploadedImages, ...response.data.files]);
       setStats(prev => ({ ...prev, images: prev.images + response.data.files.length }));
       showToast('Images uploaded successfully!', 'success');
     } catch (error) {
       showToast('Failed to upload images', 'error');
-      console.error('Upload error:', error);
+      console.error('Upload error:', error); 
     }
   };
 
@@ -147,7 +153,7 @@ function App() {
       setIsGenerating(false);
     }
   };
-
+     
   // Generate banner
   const generateBanner = async () => {
     try {
@@ -278,7 +284,7 @@ function App() {
                 id="imageUpload" 
                 accept="image/*" 
                 multiple 
-                style={{ display: 'none' }}
+                // style={{ display: 'none' }}
                 onChange={handleImageUpload}
               />
 
@@ -287,7 +293,7 @@ function App() {
                   <div className="image-preview-grid">
                     {uploadedImages.map((img, index) => (
                       <div key={index} className="image-card">
-                        <img src={`http://localhost:5000${img.path}`} alt={img.originalName} />
+                        <img src={`http://localhost:5001${img.path}`} alt={img.originalName} />
                         <div className="image-card-actions">
                           <button 
                             className="btn btn-primary btn-small"
@@ -474,6 +480,10 @@ function App() {
                   </button>
                 </div>
 
+
+
+
+
                 <div className="output-section">
                   <h3>📄 Generated Content</h3>
                   <div 
@@ -495,6 +505,9 @@ function App() {
               </div>
             </div>
           )}
+
+
+
 
           {/* Marketing Banners Tab */}
           {activeTab === 'banners' && (
@@ -646,6 +659,11 @@ function App() {
         </div>
       </div>
 
+
+
+
+
+
       {/* Toast Notification */}
       {toast && (
         <div className={`toast ${toast.type}`}>
@@ -654,7 +672,7 @@ function App() {
           </span>
           <span>{toast.message}</span>
         </div>
-      )}
+      )} 
     </div>
   );
 }
